@@ -66,15 +66,27 @@ UserSchema.pre("save", async function (next) {
 UserSchema.methods.generateJwtFromUser = function () {
   const { JWT_SECRET_KEY, JWT_EXPIRE } = process.env;
 
+  // Check if JWT secret key and expiration are available
+  if (!JWT_SECRET_KEY || !JWT_EXPIRE) {
+    throw new Error(
+      "JWT_SECRET_KEY or JWT_EXPIRE not found in environment variables"
+    );
+  }
+
   const payload = {
     id: this._id,
     username: this.username,
     email: this.email,
   };
 
-  const token = jwt.sign(payload, JWT_SECRET_KEY, { expiresIn: JWT_EXPIRE });
-
-  return token;
+  try {
+    const token = jwt.sign(payload, JWT_SECRET_KEY, { expiresIn: JWT_EXPIRE });
+    return token;
+  } catch (error) {
+    // Handle token generation errors
+    console.error("Error generating JWT:", error);
+    throw new Error("Error generating JWT");
+  }
 };
 
 UserSchema.methods.getResetPasswordTokenFromUser = function () {
