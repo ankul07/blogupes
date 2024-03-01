@@ -1,196 +1,168 @@
-const asyncErrorWrapper = require("express-async-handler")
+const asyncErrorWrapper = require("express-async-handler");
 const Story = require("../Models/story");
 const deleteImageFile = require("../Helpers/Libraries/deleteImageFile");
-const {searchHelper, paginateHelper} =require("../Helpers/query/queryHelpers")
+const {
+  searchHelper,
+  paginateHelper,
+} = require("../Helpers/query/queryHelpers");
 
-const addStory = asyncErrorWrapper(async  (req,res,next)=> {
+const addStory = asyncErrorWrapper(async (req, res, next) => {
+  const { title, content } = req.body;
 
-    const {title,content} = req.body 
+  var wordCount = content.trim().split(/\s+/).length;
 
-    var wordCount = content.trim().split(/\s+/).length ; 
-   
-    let readtime = Math.floor(wordCount /200)   ;
+  let readtime = Math.floor(wordCount / 200);
 
+  try {
+    const newStory = await Story.create({
+      title,
+      content,
+      author: req.user._id,
+      image: req.savedStoryImage,
+      readtime,
+    });
 
-    try {
-        const newStory = await Story.create({
-            title,
-            content,
-            author :req.user._id ,
-            image : req.savedStoryImage,
-            readtime
-        })
+    return res.status(200).json({
+      success: true,
+      message: "add story successfully ",
+      data: newStory,
+    });
+  } catch (error) {
+    deleteImageFile(req);
 
-        return res.status(200).json({
-            success :true ,
-            message : "add story successfully ",
-            data: newStory
-        })
-    }
+    return next(error);
+  }
+});
 
-    catch(error) {
+const getAllStories = asyncErrorWrapper(async (req, res, next) => {
+  let query = Story.find();
 
-        deleteImageFile(req)
+  query = searchHelper("title", query, req);
 
-        return next(error)
-        
-    }
-  
-})
+  const paginationResult = await paginateHelper(Story, query, req);
 
-const getAllStories = asyncErrorWrapper( async (req,res,next) =>{
+  query = paginationResult.query;
 
-    let query = Story.find();
+  query = query.sort("-likeCount -commentCount -createdAt");
 
-    query =searchHelper("title",query,req)
+  const stories = await query;
 
-    const paginationResult =await paginateHelper(Story , query ,req)
+  return res.status(200).json({
+    success: true,
+    count: stories.length,
+    data: stories,
+    page: paginationResult.page,
+    pages: paginationResult.pages,
+  });
+});
 
-    query = paginationResult.query  ;
+const detailStory = asyncErrorWrapper(async (req, res, next) => {
+  const { slug } = req.params;
+  const { activeUser } = req.body;
 
-    query = query.sort("-likeCount -commentCount -createdAt")
+  const story = await Story.findOne({
+    slug: slug,
+  }).populate("author likes");
 
-    const stories = await query
-    
-    return res.status(200).json(
-        {
-            success:true,
-            count : stories.length,
-            data : stories ,
-            page : paginationResult.page ,
-            pages : paginationResult.pages
-        })
+  const storyLikeUserIds = story.likes.map((json) => json.id);
+  const likeStatus = storyLikeUserIds.includes(activeUser._id);
 
-})
+  return res.status(200).json({
+    success: true,
+    data: story,
+    likeStatus: likeStatus,
+  });
+});
 
-const detailStory =asyncErrorWrapper(async(req,res,next)=>{
+const likeStory = asyncErrorWrapper(async (req, res, next) => {
+  const { activeUser } = req.body;
+  const { slug } = req.params;
 
-    const {slug}=req.params ;
-    const {activeUser} =req.body 
+  const story = await Story.findOne({
+    slug: slug,
+  }).populate("author likes");
 
-    const story = await Story.findOne({
-        slug: slug 
-    }).populate("author likes")
+  const storyLikeUserIds = story.likes.map((json) => json._id.toString());
 
-    const storyLikeUserIds = story.likes.map(json => json.id)
-    const likeStatus = storyLikeUserIds.includes(activeUser._id)
+  if (!storyLikeUserIds.includes(activeUser._id)) {
+    story.likes.push(activeUser);
+    story.likeCount = story.likes.length;
+    await story.save();
+  } else {
+    const index = storyLikeUserIds.indexOf(activeUser._id);
+    story.likes.splice(index, 1);
+    story.likeCount = story.likes.length;
 
+    await story.save();
+  }
 
-    return res.status(200).
-        json({
-            success:true,
-            data : story,
-            likeStatus:likeStatus
-        })
+  return res.status(200).json({
+    success: true,
+    data: story,
+  });
+});
 
-})
+const editStoryPage = asyncErrorWrapper(async (req, res, next) => {
+  const { slug } = req.params;
 
-const likeStory =asyncErrorWrapper(async(req,res,next)=>{
+  const story = await Story.findOne({
+    slug: slug,
+  }).populate("author likes");
 
-    const {activeUser} =req.body 
-    const {slug} = req.params ;
+  return res.status(200).json({
+    success: true,
+    data: story,
+  });
+});
 
-    const story = await Story.findOne({
-        slug: slug 
-    }).populate("author likes")
-   
-    const storyLikeUserIds = story.likes.map(json => json._id.toString())
-   
-    if (! storyLikeUserIds.includes(activeUser._id)){
+const editStory = asyncErrorWrapper(async (req, res, next) => {
+  const { slug } = req.params;
+  const { title, content, image, previousImage } = req.body;
 
-        story.likes.push(activeUser)
-        story.likeCount = story.likes.length
-        await story.save() ; 
-    }
-    else {
+  const story = await Story.findOne({ slug: slug });
 
-        const index = storyLikeUserIds.indexOf(activeUser._id)
-        story.likes.splice(index,1)
-        story.likeCount = story.likes.length
+  story.title = title;
+  story.content = content;
+  story.image = req.savedStoryImage;
 
-        await story.save() ; 
-    }
- 
-    return res.status(200).
-    json({
-        success:true,
-        data : story
-    })
+  if (!req.savedStoryImage) {
+    // if the image is not sent
+    story.image = image;
+  } else {
+    // if the image sent
+    // old image locatıon delete
+    deleteImageFile(req, previousImage);
+  }
 
-})
+  await story.save();
 
-const editStoryPage  =asyncErrorWrapper(async(req,res,next)=>{
-    const {slug } = req.params ; 
-   
-    const story = await Story.findOne({
-        slug: slug 
-    }).populate("author likes")
+  return res.status(200).json({
+    success: true,
+    data: story,
+  });
+});
 
-    return res.status(200).
-        json({
-            success:true,
-            data : story
-    })
+const deleteStory = asyncErrorWrapper(async (req, res, next) => {
+  const { slug } = req.params;
 
-})
+  const story = await Story.findOne({ slug: slug });
 
+  deleteImageFile(req, story.image);
 
-const editStory  =asyncErrorWrapper(async(req,res,next)=>{
-    const {slug } = req.params ; 
-    const {title ,content ,image ,previousImage } = req.body;
+  await story.deleteOne();
 
-    const story = await Story.findOne({slug : slug })
+  return res.status(200).json({
+    success: true,
+    message: "Story delete succesfully ",
+  });
+});
 
-    story.title = title ;
-    story.content = content ;
-    story.image =   req.savedStoryImage ;
-
-    if( !req.savedStoryImage) {
-        // if the image is not sent
-        story.image = image
-    }
-    else {
-        // if the image sent
-        // old image locatıon delete
-       deleteImageFile(req,previousImage)
-
-    }
-
-    await story.save()  ;
-
-    return res.status(200).
-        json({
-            success:true,
-            data :story
-    })
-
-})
-
-const deleteStory  =asyncErrorWrapper(async(req,res,next)=>{
-
-    const {slug} = req.params  ;
-
-    const story = await Story.findOne({slug : slug })
-
-    deleteImageFile(req,story.image) ; 
-
-    await story.remove()
-
-    return res.status(200).
-        json({
-            success:true,
-            message : "Story delete succesfully "
-    })
-
-})
-
-
-module.exports ={
-    addStory,
-    getAllStories,
-    detailStory,
-    likeStory,
-    editStoryPage,
-    editStory ,
-    deleteStory
-}
+module.exports = {
+  addStory,
+  getAllStories,
+  detailStory,
+  likeStory,
+  editStoryPage,
+  editStory,
+  deleteStory,
+};
